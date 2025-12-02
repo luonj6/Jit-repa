@@ -20,6 +20,45 @@ from engine_jit import train_one_epoch, evaluate
 from denoiser import Denoiser
 
 
+from utils import load_encoders
+from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from torchvision.transforms import Normalize
+
+CLIP_DEFAULT_MEAN = (0.48145466, 0.4578275, 0.40821073)
+CLIP_DEFAULT_STD = (0.26862954, 0.26130258, 0.27577711)
+
+def preprocess_raw_image(x, enc_type):
+    resolution = x.shape[-1]
+    if 'clip' in enc_type:
+        x = x / 255.
+        x = torch.nn.functional.interpolate(x, 224 * (resolution // 256), mode='bicubic')
+        x = Normalize(CLIP_DEFAULT_MEAN, CLIP_DEFAULT_STD)(x)
+    elif 'mocov3' in enc_type or 'mae' in enc_type:
+        x = x / 255.
+        x = Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)(x)
+    elif 'dinov2' in enc_type:
+        x = x / 255.
+        x = Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)(x)
+        x = torch.nn.functional.interpolate(x, 224 * (resolution // 256), mode='bicubic')
+    elif 'dinov1' in enc_type:
+        x = x / 255.
+        x = Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)(x)
+    elif 'jepa' in enc_type:
+        x = x / 255.
+        x = Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)(x)
+        x = torch.nn.functional.interpolate(x, 224 * (resolution // 256), mode='bicubic')
+
+    return x
+
+def sample_posterior(moments, latents_scale=1., latents_bias=0.):
+    device = moments.device
+    
+    mean, std = torch.chunk(moments, 2, dim=1)
+    z = mean + std * torch.randn_like(mean)
+    z = (z * latents_scale + latents_bias) 
+    return z 
+
+##上面是改repa加入的
 def get_args_parser():
     parser = argparse.ArgumentParser('JiT', add_help=False)
 
@@ -108,6 +147,11 @@ def get_args_parser():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='URL used to set up distributed training')
+    
+
+    #########################改repa加入的
+    parser.add_argument("--enc-type", type=str, default='dinov2-vit-b')
+    parser.add_argument("--encoder-depth", type=int, default=0)
 
     return parser
 
@@ -218,6 +262,21 @@ def main(args):
                 evaluate(model_without_ddp, args, 0, batch_size=args.gen_bsz, log_writer=log_writer)
         return
 
+    ##
+    latents_scale = torch.tensor(
+    [0.18215, 0.18215, 0.18215, 0.18215]
+    ).view(1, 4, 1, 1).to(device)
+    latents_bias = torch.tensor(
+        [0., 0., 0., 0.]
+        ).view(1, 4, 1, 1).to(device)
+    
+    if args.enc_type != None:
+        encoders, encoder_types, architectures = load_encoders(
+            args.enc_type, device, args.resolution
+            )
+    else:
+        raise NotImplementedError()
+
     # Training loop
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -225,6 +284,28 @@ def main(args):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 
+        #加入encoder特征
+        for raw_image, x, y in  data_loader_train:
+            raw_image = raw_image.to(device)
+            x = x.squeeze(dim=1).to(device)
+            y = y.to(device)
+            z = None
+            labels = y
+            zs = None
+            with torch.no_grad():
+                #这个sample_posterior有什么用
+                x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+                if args.encoder_depth > 0:
+                    zs = []
+                    # with accelerator.autocast():    ##这个accelerator没定义，应该没啥用吧
+                    for encoder, encoder_type, arch in zip(encoders, encoder_types, architectures):
+                        raw_image_ = preprocess_raw_image(raw_image, encoder_type)
+                        z = encoder.forward_features(raw_image_)
+                        if 'mocov3' in encoder_type: z = z = z[:, 1:] 
+                        if 'dinov2' in encoder_type: z = z['x_norm_patchtokens']
+                        zs.append(z)
+
+        #############
         train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, args=args)
 
         # Save checkpoint periodically
