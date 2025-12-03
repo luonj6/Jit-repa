@@ -395,7 +395,7 @@ class JiT(nn.Module):
         if self.encoder_depth <= 0:
             return output
         else:
-            return output
+            return output,zs
 
 
 def JiT_B_16(**kwargs):
