@@ -152,6 +152,7 @@ def get_args_parser():
     #########################改repa加入的
     parser.add_argument("--enc-type", type=str, default='dinov2-vit-b')
     parser.add_argument("--encoder-depth", type=int, default=0)
+    parser.add_argument("--proj-coeff", type=float, default=0.5)
 
     return parser
 

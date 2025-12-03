@@ -9,6 +9,19 @@ import math
 import torch.nn.functional as F
 from util.model_util import VisionRotaryEmbeddingFast, get_2d_sincos_pos_embed, RMSNorm
 
+########################
+
+def build_mlp(hidden_size, projector_dim, z_dim):
+    return nn.Sequential(
+                nn.Linear(hidden_size, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, z_dim),
+            )
+
+
+############上面是加入repa的
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -220,7 +233,11 @@ class JiT(nn.Module):
         num_classes=1000,
         bottleneck_dim=128,
         in_context_len=32,
-        in_context_start=8
+        in_context_start=8,
+        ######加入repa
+        projector_dim=2048,
+        z_dims=768,
+        encoder_depth=8
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -232,6 +249,10 @@ class JiT(nn.Module):
         self.in_context_len = in_context_len
         self.in_context_start = in_context_start
         self.num_classes = num_classes
+        #########加入repa
+        self.z_dims = z_dims
+        self.encoder_depth = encoder_depth
+        ##########################
 
         # time and class embed
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -270,6 +291,14 @@ class JiT(nn.Module):
                      proj_drop=proj_drop if (depth // 4 * 3 > i >= depth // 4) else 0.0)
             for i in range(depth)
         ])
+
+        
+        ##########加入repa
+        self.projectors = nn.ModuleList([
+            build_mlp(hidden_size, projector_dim, z_dim) for z_dim in z_dims
+            ])
+        
+        #########################
 
         # linear predict
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
@@ -334,6 +363,7 @@ class JiT(nn.Module):
         t: (N,)
         y: (N,)
         """
+
         # class and time embeddings
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y)
@@ -343,6 +373,8 @@ class JiT(nn.Module):
         x = self.x_embedder(x)
         x += self.pos_embed
 
+        N, T, D = x.shape
+
         for i, block in enumerate(self.blocks):
             # in-context
             if self.in_context_len > 0 and i == self.in_context_start:
@@ -351,12 +383,19 @@ class JiT(nn.Module):
                 x = torch.cat([in_context_tokens, x], dim=1)
             x = block(x, c, self.feat_rope if i < self.in_context_start else self.feat_rope_incontext)
 
+            ############加入repa
+            if (i + 1) == self.encoder_depth:
+                zs = [projector(x.reshape(-1, D)).reshape(N, T, -1) for projector in self.projectors]
+
         x = x[:, self.in_context_len:]
 
         x = self.final_layer(x, c)
         output = self.unpatchify(x, self.patch_size)
 
-        return output
+        if self.encoder_depth <= 0:
+            return output
+        else:
+            return output
 
 
 def JiT_B_16(**kwargs):

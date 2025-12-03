@@ -15,6 +15,10 @@ class Denoiser(nn.Module):
             num_classes=args.class_num,
             attn_drop=args.attn_dropout,
             proj_drop=args.proj_dropout,
+            ########加入repa
+            encoder_depth=args.encoder_depth
+
+
         )
         self.img_size = args.img_size
         self.num_classes = args.class_num
@@ -55,6 +59,7 @@ class Denoiser(nn.Module):
         z = t * x + (1 - t) * e
         v = (x - z) / (1 - t).clamp_min(self.t_eps)
 
+        ###########加入repa
         x_pred = self.net(z, t.flatten(), labels_dropped)
         v_pred = (x_pred - z) / (1 - t).clamp_min(self.t_eps)
 
