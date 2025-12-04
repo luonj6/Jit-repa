@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 from model_jit import JiT_models
 
+#############加入repa
+def mean_flat(x):
+    """
+    Take the mean over all non-batch dimensions.
+    """
+    return torch.mean(x, dim=list(range(1, len(x.size()))))
+
 
 class Denoiser(nn.Module):
     def __init__(
@@ -41,6 +48,9 @@ class Denoiser(nn.Module):
         self.cfg_scale = args.cfg
         self.cfg_interval = (args.interval_min, args.interval_max)
 
+        ########加入repa
+        self.encoder_depth = args.encoder_depth
+
     def drop_labels(self, labels):
         drop = torch.rand(labels.shape[0], device=labels.device) < self.label_drop_prob
         out = torch.where(drop, torch.full_like(labels, self.num_classes), labels)
@@ -50,7 +60,7 @@ class Denoiser(nn.Module):
         z = torch.randn(n, device=device) * self.P_std + self.P_mean
         return torch.sigmoid(z)
 
-    def forward(self, x, labels):
+    def forward(self, x, labels, zs=None):
         labels_dropped = self.drop_labels(labels) if self.training else labels
 
         t = self.sample_t(x.size(0), device=x.device).view(-1, *([1] * (x.ndim - 1)))
@@ -60,14 +70,32 @@ class Denoiser(nn.Module):
         v = (x - z) / (1 - t).clamp_min(self.t_eps)
 
         ###########加入repa
-        x_pred = self.net(z, t.flatten(), labels_dropped)
+        if self.encoder_depth <=0:
+            x_pred = self.net(z, t.flatten(), labels_dropped)
+        else:
+            x_pred, zs_tilde = self.net(z, t.flatten(), labels_dropped)
+
         v_pred = (x_pred - z) / (1 - t).clamp_min(self.t_eps)
 
         # l2 loss
         loss = (v - v_pred) ** 2
         loss = loss.mean(dim=(1, 2, 3)).mean()
 
-        return loss
+
+        ###########加入repa
+        proj_loss = 0.
+        if self.encoder_depth <=0:
+            return loss
+        else:
+            bsz = zs[0].shape[0]
+            for i, (z, z_tilde) in enumerate(zip(zs, zs_tilde)):       #zs_tilde   torch.Size=[32,257,768]    zs  torch.Size=[32,197,768]
+                for j, (z_j, z_tilde_j) in enumerate(zip(z, z_tilde)):
+                    z_tilde_j = torch.nn.functional.normalize(z_tilde_j, dim=-1)  #torch.Size=[257,768]
+                    z_j = torch.nn.functional.normalize(z_j, dim=-1)   #torch.Size=[197,768]
+                    proj_loss += mean_flat(-(z_j * z_tilde_j).sum(dim=-1))
+            proj_loss /= (len(zs) * bsz)
+            return loss, proj_loss
+        
 
     @torch.no_grad()
     def generate(self, labels):

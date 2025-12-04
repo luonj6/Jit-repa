@@ -13,7 +13,7 @@ import torch_fidelity
 import copy
 
 
-def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None):
+def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, zs=None, args=None):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -35,8 +35,15 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         labels = labels.to(device, non_blocking=True)
 
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            loss = model(x, labels)
-
+            ##############加入repa
+            if args.encoder_depth <=0:
+                loss = model(x, labels, zs)
+            else:
+                loss, proj_loss = model(x, labels, zs)
+                ##在denoiser里面loss已经mean过了
+                proj_loss_mean = proj_loss.mean() * args.proj_coeff
+                loss = loss + proj_loss_mean
+                
         loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
