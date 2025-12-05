@@ -153,6 +153,7 @@ def get_args_parser():
     parser.add_argument("--enc-type", type=str, default='dinov2-vit-b')
     parser.add_argument("--encoder-depth", type=int, default=0)
     parser.add_argument("--proj-coeff", type=float, default=0.5)
+    parser.add_argument("--resolution", type=int, choices=[256, 512], default=256)
 
     return parser
 
@@ -286,7 +287,10 @@ def main(args):
             data_loader_train.sampler.set_epoch(epoch)
 
         #加入encoder特征
-        for raw_image, x, y in  data_loader_train:
+        # for raw_image, x, y in  data_loader_train:
+        ##解决jit项目中的dataset定义返回值与reg项目不一致的问题
+        for x, y in data_loader_train:
+            raw_image = x
             raw_image = raw_image.to(device)
             x = x.squeeze(dim=1).to(device)
             y = y.to(device)

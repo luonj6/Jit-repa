@@ -3,7 +3,7 @@ from torchvision.datasets.utils import download_url
 import torch
 import torchvision.models as torchvision_models
 import timm
-from models import mocov3_vit
+# from models import mocov3_vit
 import math
 import warnings
 

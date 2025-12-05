@@ -236,7 +236,7 @@ class JiT(nn.Module):
         in_context_start=8,
         ######加入repa
         projector_dim=2048,
-        z_dims=768,
+        z_dims=[768],
         encoder_depth=8
     ):
         super().__init__()
