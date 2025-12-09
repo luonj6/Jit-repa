@@ -299,7 +299,9 @@ def main(args):
             zs = None
             with torch.no_grad():
                 #这个sample_posterior有什么用
-                x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+                #JiT输入的是图像，不需要LDM
+                # x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+
                 if args.encoder_depth > 0:
                     zs = []
                     # with accelerator.autocast():    ##这个accelerator没定义，应该没啥用吧
@@ -310,36 +312,37 @@ def main(args):
                         if 'dinov2' in encoder_type: z = z['x_norm_patchtokens']
                         zs.append(z)
 
-        #############加入repa
-        train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, zs=zs, args=args)
+            #############加入repa
+            #####train_one_epoch放在for dataloader下
+            train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, zs=zs, args=args)
 
-        # Save checkpoint periodically
-        if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
-            misc.save_model(
-                args=args,
-                model_without_ddp=model_without_ddp,
-                optimizer=optimizer,
-                epoch=epoch,
-                epoch_name="last"
-            )
+            # Save checkpoint periodically
+            if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
+                misc.save_model(
+                    args=args,
+                    model_without_ddp=model_without_ddp,
+                    optimizer=optimizer,
+                    epoch=epoch,
+                    epoch_name="last"
+                )
 
-        if epoch % 100 == 0 and epoch > 0:
-            misc.save_model(
-                args=args,
-                model_without_ddp=model_without_ddp,
-                optimizer=optimizer,
-                epoch=epoch
-            )
+            if epoch % 100 == 0 and epoch > 0:
+                misc.save_model(
+                    args=args,
+                    model_without_ddp=model_without_ddp,
+                    optimizer=optimizer,
+                    epoch=epoch
+                )
 
-        # Perform online evaluation at specified intervals
-        if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
-            torch.cuda.empty_cache()
-            with torch.no_grad():
-                evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer)
-            torch.cuda.empty_cache()
+            # Perform online evaluation at specified intervals
+            if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
+                torch.cuda.empty_cache()
+                with torch.no_grad():
+                    evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer)
+                torch.cuda.empty_cache()
 
-        if misc.is_main_process() and log_writer is not None:
-            log_writer.flush()
+            if misc.is_main_process() and log_writer is not None:
+                log_writer.flush()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

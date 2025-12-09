@@ -39,12 +39,15 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
             if args.encoder_depth <=0:
                 loss = model(x, labels, zs)
             else:
-                loss, proj_loss = model(x, labels, zs)
+                loss1, proj_loss = model(x, labels, zs)
                 ##在denoiser里面loss已经mean过了
                 proj_loss_mean = proj_loss.mean() * args.proj_coeff
-                loss = loss + proj_loss_mean
+                loss = loss1 + proj_loss_mean
+                loss1_value = loss1.item()
+                proj_loss_value = proj_loss_mean.item()
                 
         loss_value = loss.item()
+
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
@@ -58,16 +61,22 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         model_without_ddp.update_ema()
 
         metric_logger.update(loss=loss_value)
+        metric_logger.update(loss1=loss1_value)
+        metric_logger.update(proj_loss=proj_loss_value)
         lr = optimizer.param_groups[0]["lr"]
         metric_logger.update(lr=lr)
 
         loss_value_reduce = misc.all_reduce_mean(loss_value)
+        loss1_value_reduce = misc.all_reduce_mean(loss1_value)
+        proj_loss_value_reduce = misc.all_reduce_mean(proj_loss_value)
 
         if log_writer is not None:
             # Use epoch_1000x as the x-axis in TensorBoard to calibrate curves.
             epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
             if data_iter_step % args.log_freq == 0:
                 log_writer.add_scalar('train_loss', loss_value_reduce, epoch_1000x)
+                log_writer.add_scalar('train_loss1', loss1_value_reduce, epoch_1000x)      
+                log_writer.add_scalar('train_proj_loss', proj_loss_value_reduce, epoch_1000x)  
                 log_writer.add_scalar('lr', lr, epoch_1000x)
 
 
