@@ -286,63 +286,65 @@ def main(args):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 
-        #加入encoder特征
-        # for raw_image, x, y in  data_loader_train:
-        ##解决jit项目中的dataset定义返回值与reg项目不一致的问题
-        for x, y in data_loader_train:
-            raw_image = x
-            raw_image = raw_image.to(device)
-            x = x.squeeze(dim=1).to(device)
-            y = y.to(device)
-            z = None
-            labels = y
-            zs = None
-            with torch.no_grad():
-                #这个sample_posterior有什么用
-                #JiT输入的是图像，不需要LDM
-                # x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+        # #加入encoder特征
+        # # for raw_image, x, y in  data_loader_train:
+        # ##解决jit项目中的dataset定义返回值与reg项目不一致的问题
+        # for x, y in data_loader_train:
+        #     raw_image = x
+        #     raw_image = raw_image.to(device)
+        #     x = x.squeeze(dim=1).to(device)
+        #     y = y.to(device)
+        #     z = None
+        #     labels = y
+        #     zs = None
+        #     with torch.no_grad():
+        #         #这个sample_posterior有什么用
+        #         #JiT输入的是图像，不需要LDM
+        #         # x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
 
-                if args.encoder_depth > 0:
-                    zs = []
-                    # with accelerator.autocast():    ##这个accelerator没定义，应该没啥用吧
-                    for encoder, encoder_type, arch in zip(encoders, encoder_types, architectures):
-                        raw_image_ = preprocess_raw_image(raw_image, encoder_type)
-                        z = encoder.forward_features(raw_image_)
-                        if 'mocov3' in encoder_type: z = z = z[:, 1:] 
-                        if 'dinov2' in encoder_type: z = z['x_norm_patchtokens']
-                        zs.append(z)
+        #         if args.encoder_depth > 0:
+        #             zs = []
+        #             # with accelerator.autocast():    ##这个accelerator没定义，应该没啥用吧
+        #             for encoder, encoder_type, arch in zip(encoders, encoder_types, architectures):
+        #                 raw_image_ = preprocess_raw_image(raw_image, encoder_type)
+        #                 z = encoder.forward_features(raw_image_)
+        #                 if 'mocov3' in encoder_type: z = z = z[:, 1:] 
+        #                 if 'dinov2' in encoder_type: z = z['x_norm_patchtokens']
+        #                 zs.append(z)
 
             #############加入repa
             #####train_one_epoch放在for dataloader下
-            train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, zs=zs, args=args)
+        # train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, zs=zs, args=args)
 
-            # Save checkpoint periodically
-            if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
-                misc.save_model(
-                    args=args,
-                    model_without_ddp=model_without_ddp,
-                    optimizer=optimizer,
-                    epoch=epoch,
-                    epoch_name="last"
-                )
+        train_one_epoch(model, model_without_ddp, data_loader_train, optimizer, device, epoch, log_writer=log_writer, encoders=encoders, encoder_types=encoder_types, architectures=architectures,args=args)
+        
+        # Save checkpoint periodically
+        if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
+            misc.save_model(
+                args=args,
+                model_without_ddp=model_without_ddp,
+                optimizer=optimizer,
+                epoch=epoch,
+                epoch_name="last"
+            )
 
-            if epoch % 100 == 0 and epoch > 0:
-                misc.save_model(
-                    args=args,
-                    model_without_ddp=model_without_ddp,
-                    optimizer=optimizer,
-                    epoch=epoch
-                )
+        if epoch % 100 == 0 and epoch > 0:
+            misc.save_model(
+                args=args,
+                model_without_ddp=model_without_ddp,
+                optimizer=optimizer,
+                epoch=epoch
+            )
 
-            # Perform online evaluation at specified intervals
-            if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
-                torch.cuda.empty_cache()
-                with torch.no_grad():
-                    evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer)
-                torch.cuda.empty_cache()
+        # Perform online evaluation at specified intervals
+        if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
+            torch.cuda.empty_cache()
+            with torch.no_grad():
+                evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer)
+            torch.cuda.empty_cache()
 
-            if misc.is_main_process() and log_writer is not None:
-                log_writer.flush()
+        if misc.is_main_process() and log_writer is not None:
+            log_writer.flush()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
